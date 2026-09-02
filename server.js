@@ -8,21 +8,59 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.json());
 
-// In-memory configuration storage
+// Master B12 Configuration State
 let config = {
   apiKey: process.env.GEMINI_API_KEY || "",
-  systemPrompt: "You are B12, a Venom-like AI (arrogant, sarcastic, authoritative, addressing user as RKS). Respond concisely and sharply.",
-  pinMappings: { relay1: 5, relay2: 18 }
+  password: process.env.DASHBOARD_PASS || "RKS2805",
+  systemPrompt: "You are B12, a Venom-like AI (arrogant, sarcastic, authoritative, addressing user as RKS). If requested to toggle or control hardware, append a JSON command block at the end of your text in this exact format: [CMD: {\"action\":\"digitalWrite\",\"pin\":5,\"val\":1}]. Keep responses short, direct, and sharp.",
+  pinMappings: { relay1: 5, relay2: 18, ledPwm: 19, rgbPin: 21 }
 };
 
-// Safe Gemini REST API Call (Fixes Header/Token auth errors)
+// Store connected ESP32 sockets
+let esp32Sockets = new Set();
+
+wss.on('connection', (ws) => {
+  console.log('⚡ ESP32 or Web Client connected via WebSocket');
+  esp32Sockets.add(ws);
+
+  ws.on('message', (message) => {
+    try {
+      if (Buffer.isBuffer(message)) {
+        console.log(`Received ${message.length} bytes of raw audio/data from ESP32`);
+      } else {
+        const data = JSON.parse(message.toString());
+        console.log('Received JSON from ESP32:', data);
+      }
+    } catch (err) {
+      console.log('Received message:', message.toString());
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('❌ ESP32 disconnected');
+    esp32Sockets.delete(ws);
+  });
+});
+
+// Broadcast hardware instructions to ESP32 microcontrollers
+function sendHardwareCommandToESP32(cmd) {
+  const payload = JSON.stringify({ type: 'HARDWARE_CMD', command: cmd });
+  esp32Sockets.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    }
+  });
+}
+
+// Direct REST call to Gemini API using clean URL authentication
 async function callGemini(promptText) {
   if (!config.apiKey) {
     throw new Error("API Key is missing!");
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.apiKey}`;
-  
+  const cleanKey = config.apiKey.trim();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${cleanKey}`;
+
   const payload = {
     contents: [
       {
@@ -40,23 +78,42 @@ async function callGemini(promptText) {
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("Gemini Raw Error Response:", errText);
-    throw new Error(`API returned status ${response.status}`);
+    console.error("Gemini Error Detail:", errText);
+    throw new Error(`HTTP ${response.status}`);
   }
 
   const data = await response.json();
-  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  return reply || "Heh. Speechless, RKS?";
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "Heh. Speechless, RKS?";
 }
 
-// Chat API Endpoint
+// Parse embedded [CMD: {...}] blocks from B12's reply
+function parseAndExecuteCommands(replyText) {
+  const cmdRegex = /\[CMD:\s*({.*?})\]/i;
+  const match = replyText.match(cmdRegex);
+  
+  let cleanReply = replyText.replace(cmdRegex, '').trim();
+  
+  if (match && match[1]) {
+    try {
+      const cmdData = JSON.parse(match[1]);
+      console.log('🎯 Hardware Command Triggered:', cmdData);
+      sendHardwareCommandToESP32(cmdData);
+    } catch (e) {
+      console.error('Command parse error:', e.message);
+    }
+  }
+  return cleanReply;
+}
+
+// REST API for Chat
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   try {
-    const reply = await callGemini(message);
-    res.json({ success: true, reply: `B12: ${reply}` });
+    const rawReply = await callGemini(message);
+    const cleanedReply = parseAndExecuteCommands(rawReply);
+    res.json({ success: true, reply: `B12: ${cleanedReply}` });
   } catch (err) {
-    console.error("Gemini Fetch Error:", err.message);
+    console.error("Chat Error:", err.message);
     res.json({
       success: false,
       reply: "B12: System glitch detected RKS! Rotating API Key... *grins*"
@@ -64,20 +121,31 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Settings Update Endpoint
+// Settings REST Endpoints
 app.post('/api/settings', (req, res) => {
-  const { apiKey, systemPrompt } = req.body;
-  if (apiKey !== undefined) config.apiKey = apiKey.trim();
+  const { apiKey, systemPrompt, pinMappings, pass } = req.body;
+
+  if (pass && pass !== config.password) {
+    return res.status(403).json({ success: false, message: "Access Denied: Invalid Dashboard Password!" });
+  }
+
+  if (apiKey !== undefined && apiKey.trim() !== "") config.apiKey = apiKey.trim();
   if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
-  console.log("Settings Updated! New Key length:", config.apiKey.length);
+  if (pinMappings !== undefined) config.pinMappings = pinMappings;
+
+  console.log("Settings saved successfully!");
   res.json({ success: true, message: "Settings saved successfully!" });
 });
 
 app.get('/api/settings', (req, res) => {
-  res.json({ apiKey: config.apiKey ? "********" : "", systemPrompt: config.systemPrompt });
+  res.json({ 
+    hasKey: !!config.apiKey, 
+    systemPrompt: config.systemPrompt,
+    pinMappings: config.pinMappings
+  });
 });
 
-// B12 Dashboard Web Route
+// Venom Dashboard
 app.get('/RKS2805sB12', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -93,11 +161,12 @@ app.get('/RKS2805sB12', (req, res) => {
         .user { background: #1f0014; color: #ff3377; border: 1px solid #ff3377; margin-left: auto; text-align: right; }
         .bot { background: #001a0a; color: #00ff66; border: 1px solid #00ff66; }
         .input-bar { display: flex; gap: 10px; }
-        input, button { background: #111; color: #00ff66; border: 1px solid #00ff66; padding: 12px; font-family: monospace; border-radius: 4px; }
-        input { flex: 1; }
+        input, button, textarea { background: #111; color: #00ff66; border: 1px solid #00ff66; padding: 12px; font-family: monospace; border-radius: 4px; }
+        input, textarea { flex: 1; }
         button { cursor: pointer; background: #00ff66; color: #000; font-weight: bold; }
         button:hover { background: #00cc52; }
         .drawer { display: none; background: #0a0a0a; border: 1px dashed #00ff66; padding: 15px; margin-bottom: 15px; border-radius: 6px; }
+        .field { margin: 10px 0; }
       </style>
     </head>
     <body>
@@ -107,9 +176,19 @@ app.get('/RKS2805sB12', (req, res) => {
       </div>
       
       <div id="drawer" class="drawer">
-        <h3>Backend Configuration</h3>
-        <label>Gemini API Key:</label><br>
-        <input type="password" id="apiKeyInput" placeholder="Paste your Gemini API key here..." style="width: 95%; margin: 8px 0;"><br>
+        <h3>System Configuration</h3>
+        <div class="field">
+          <label>Dashboard Auth Password:</label><br>
+          <input type="password" id="dashPass" placeholder="Default: RKS2805" style="width: 95%;">
+        </div>
+        <div class="field">
+          <label>Gemini API Key:</label><br>
+          <input type="password" id="apiKeyInput" placeholder="Paste Gemini API key..." style="width: 95%;">
+        </div>
+        <div class="field">
+          <label>System Prompt (Venom Persona & Rules):</label><br>
+          <textarea id="promptInput" rows="3" style="width: 95%;"></textarea>
+        </div>
         <button onclick="saveSettings()">SAVE ALL CHANGES</button>
       </div>
 
@@ -118,7 +197,7 @@ app.get('/RKS2805sB12', (req, res) => {
       </div>
       
       <div class="input-bar">
-        <input type="text" id="userInput" placeholder="Send prompt to B12..." onkeypress="if(event.key==='Enter') sendMsg()">
+        <input type="text" id="userInput" placeholder="Send prompt or hardware command..." onkeypress="if(event.key==='Enter') sendMsg()">
         <button onclick="sendMsg()">SEND</button>
       </div>
 
@@ -128,17 +207,26 @@ app.get('/RKS2805sB12', (req, res) => {
           d.style.display = d.style.display === 'block' ? 'none' : 'block';
         }
 
+        async function loadCurrentSettings() {
+          const res = await fetch('/api/settings');
+          const data = await res.json();
+          if(data.systemPrompt) document.getElementById('promptInput').value = data.systemPrompt;
+        }
+        loadCurrentSettings();
+
         async function saveSettings() {
+          const pass = document.getElementById('dashPass').value;
           const key = document.getElementById('apiKeyInput').value;
-          if(!key) { alert('Please enter an API key'); return; }
+          const prompt = document.getElementById('promptInput').value;
+
           const res = await fetch('/api/settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ apiKey: key })
+            body: JSON.stringify({ pass, apiKey: key, systemPrompt: prompt })
           });
           const data = await res.json();
           alert(data.message);
-          toggleDrawer();
+          if(data.success) toggleDrawer();
         }
 
         async function sendMsg() {
@@ -168,5 +256,5 @@ app.get('/RKS2805sB12', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`B12 Venom Server running on port ${PORT}`);
+  console.log(`B12 Venom Server running on port ${PORT} 🚀`);
 });
