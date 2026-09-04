@@ -8,14 +8,14 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.json());
 
-// In-memory configuration storage
+// System state configuration
 let config = {
   apiKey: process.env.GEMINI_API_KEY || "",
   systemPrompt: "You are B12, a Venom-like AI (arrogant, sarcastic, authoritative, addressing user as RKS). Respond concisely and sharply.",
   pinMappings: { relay1: 5, relay2: 18 }
 };
 
-// WebSocket connection handling (For ESP32 & Clients)
+// WebSocket handling for ESP32 & clients
 wss.on('connection', (ws) => {
   console.log('Client connected via WebSocket');
   ws.send(JSON.stringify({ type: 'STATUS', message: 'B12 WebSocket Active' }));
@@ -25,14 +25,15 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Direct REST API Call (Solves 401 Unauthorized & SDK errors completely)
+// Direct REST call with Debug Error Output
 async function callGemini(promptText) {
-  if (!config.apiKey || config.apiKey.trim() === "") {
-    throw new Error("Gemini API Key is missing! Set it in Settings.");
+  const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
+
+  if (!activeKey) {
+    throw new Error("API Key is completely missing! Please set GEMINI_API_KEY in Render Environment Variables or UI Settings.");
   }
 
-  const cleanKey = config.apiKey.trim();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${cleanKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`;
 
   const payload = {
     contents: [
@@ -45,16 +46,14 @@ async function callGemini(promptText) {
 
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("Gemini Direct REST Error:", errorText);
-    throw new Error(`Gemini API returned status ${response.status}`);
+    console.error("Gemini Direct REST Error Raw:", errorText);
+    throw new Error(`HTTP ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
@@ -62,7 +61,7 @@ async function callGemini(promptText) {
   return reply || "Heh. Speechless, RKS?";
 }
 
-// Chat API Route
+// Chat API Route with direct error details
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   try {
@@ -72,7 +71,7 @@ app.post('/api/chat', async (req, res) => {
     console.error("Chat Process Error:", err.message);
     res.json({
       success: false,
-      reply: "B12: System glitch detected RKS! Rotating API Key... *grins*"
+      reply: `B12 Error Detail -> ${err.message}`
     });
   }
 });
@@ -82,7 +81,7 @@ app.post('/api/settings', (req, res) => {
   const { apiKey, systemPrompt } = req.body;
   if (apiKey !== undefined) config.apiKey = apiKey.trim();
   if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
-  console.log("Settings saved! Key length:", config.apiKey.length);
+  console.log("Settings updated! Active key length:", config.apiKey.length);
   res.json({ success: true, message: "Settings saved successfully!" });
 });
 
@@ -90,7 +89,7 @@ app.get('/api/settings', (req, res) => {
   res.json({ apiKey: config.apiKey ? "********" : "", systemPrompt: config.systemPrompt });
 });
 
-// Venom Core Dashboard UI
+// Venom Core Control Center Dashboard
 app.get('/RKS2805sB12', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -102,7 +101,7 @@ app.get('/RKS2805sB12', (req, res) => {
         body { background: #050505; color: #00ff66; font-family: monospace; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #00ff66; padding-bottom: 10px; }
         .chat-container { border: 1px solid #00ff66; padding: 15px; height: 350px; overflow-y: auto; margin: 15px 0; background: #000; border-radius: 6px; }
-        .msg { margin: 10px 0; padding: 10px; border-radius: 4px; max-width: 80%; font-size: 14px; }
+        .msg { margin: 10px 0; padding: 10px; border-radius: 4px; max-width: 85%; font-size: 14px; word-break: break-word; }
         .user { background: #1f0014; color: #ff3377; border: 1px solid #ff3377; margin-left: auto; text-align: right; }
         .bot { background: #001a0a; color: #00ff66; border: 1px solid #00ff66; }
         .input-bar { display: flex; gap: 10px; }
