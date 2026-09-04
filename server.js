@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Smart Gemini API Call with Key Rotation and Auto-Recovery
+// Smart Gemini API Call with Key Rotation using Gemini 3.6 Flash
 async function callGemini(promptText) {
   const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   
@@ -47,8 +47,8 @@ async function callGemini(promptText) {
   // Split multiple API keys separated by comma
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
-  // Preferred latest models in priority order
-  const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+  // Updated active models array
+  const models = ["gemini-3.6-flash"];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
     `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Keep response under 25 words.`;
@@ -72,14 +72,14 @@ async function callGemini(promptText) {
           }
         }
       },
-      maxOutputTokens: 150, // Optimized for ultra-fast response speed
+      maxOutputTokens: 150, // Optimized for high speed
       temperature: 0.6
     }
   };
 
   let lastError = "";
 
-  // 1. Try ALL API Keys on the LATEST model first
+  // Loop through available models and rotate through all API keys
   for (const model of models) {
     for (let i = 0; i < apiKeys.length; i++) {
       const currentKey = apiKeys[i];
@@ -132,7 +132,7 @@ async function callGemini(promptText) {
     }
   }
 
-  throw new Error(`All API Keys and models exhausted! Please wait for daily reset or add a new key in Settings. Detail: ${lastError}`);
+  throw new Error(`All API Keys exhausted! Please wait for daily reset or add a new key in Settings. Detail: ${lastError}`);
 }
 
 // Chat API Route
