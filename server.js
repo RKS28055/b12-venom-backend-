@@ -8,10 +8,10 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.json());
 
-// dynamic state with hardware pin mappings
+// Dynamic state with hardware pin mappings
 let config = {
   apiKey: process.env.GEMINI_API_KEY || "",
-  systemPrompt: "You are B12, a Venom-like AI (arrogant, sarcastic, authoritative, addressing user as RKS). Respond concisely and sharply.",
+  systemPrompt: "You are B12, a Venom-like AI (arrogant, sarcastic, authoritative, addressing user as RKS). Respond concisely and sharply in character. Never summarize user inputs.",
   pinMappings: [
     { pinName: "D5", deviceType: "Relay", loadName: "Light", status: "OFF" },
     { pinName: "D18", deviceType: "Relay", loadName: "Fan", status: "OFF" }
@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Fast Gemini REST API Call with Hardware Logic
+// Gemini REST API Call with proper System Instruction
 async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
@@ -46,19 +46,21 @@ async function callGemini(promptText) {
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${activeKey}`;
 
-  // Feed current hardware pin configuration to AI
-  const hwContext = `\nCURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
-    `If RKS asks to turn ON/OFF any device/relay/pin, include an ACTION TAG at the end of your response like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Otherwise, just reply normally. Keep response very short and fast.`;
+  const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
+    `If RKS asks to turn ON/OFF any device/relay/pin, include an ACTION TAG at the end of your response like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Otherwise, just reply normally as B12. Keep response concise and fast.`;
 
   const payload = {
+    system_instruction: {
+      parts: [{ text: `${config.systemPrompt}\n\n${hwContext}` }]
+    },
     contents: [
       {
         role: "user",
-        parts: [{ text: `${config.systemPrompt}${hwContext}\nUser RKS: ${promptText}` }]
+        parts: [{ text: promptText }]
       }
     ],
     generationConfig: {
-      maxOutputTokens: 150,
+      maxOutputTokens: 250,
       temperature: 0.7
     }
   };
@@ -234,8 +236,8 @@ app.get('/RKS2805sB12', (req, res) => {
           const cleanText = text.replace(/B12:/g, '').trim();
           const utterance = new SpeechSynthesisUtterance(cleanText);
           
-          utterance.pitch = 0.2; // Extremely low deep voice pitch
-          utterance.rate = 0.85;  // Slow authoritative pace
+          utterance.pitch = 0.2;
+          utterance.rate = 0.85;
           
           const voices = window.speechSynthesis.getVoices();
           const maleVoice = voices.find(v => v.lang.includes('en') && (v.name.includes('Male') || v.name.includes('David') || v.name.includes('Google US English')));
@@ -263,7 +265,6 @@ app.get('/RKS2805sB12', (req, res) => {
           chat.innerHTML += '<div class="msg bot">' + data.reply + '</div>';
           chat.scrollTop = chat.scrollHeight;
 
-          // Trigger Venom Voice
           speakVenom(data.reply);
         }
       </script>
