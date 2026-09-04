@@ -6,12 +6,12 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Allows ESP32 audio uploads
 
 let config = {
   // Can contain multiple API keys separated by commas: "KEY_1, KEY_2, KEY_3"
   apiKey: process.env.GEMINI_API_KEY || "",
-  systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. Speak naturally in dynamic Banglish (natural daily Bengali mixed with English words, the way Bengalis speak naturally) or full aggressive English with dark humor and symbiote attitude. When speaking Bengali, use clear and proper words. NEVER limit or cut off your response mid-sentence. Adjust your answer length dynamically: if RKS asks a short question, give a punchy response; if RKS asks for a paragraph, explanation, or detailed task, give a complete, full, and detailed response without stopping artificially.",
+  systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. You must respond either in pure Bengali using proper Bengali script (বাংলা বর্ণমালা/হরফ) or in aggressive English. STRICTLY DO NOT write Bengali words using English/Latin alphabet (No Banglish). Maintain dark Venom attitude, sarcasm, and evil personality at all times. Adjust your output length dynamically: if RKS asks a short question, answer briefly; if RKS asks for a paragraph or explanation, give a full, detailed, and complete response without cutting off.",
   pinMappings: [
     { pinName: "D5", deviceType: "Relay", loadName: "Light", status: "OFF" },
     { pinName: "D18", deviceType: "Relay", loadName: "Fan", status: "OFF" }
@@ -29,15 +29,15 @@ function broadcastToESP32(actionData) {
 
 wss.on('connection', (ws) => {
   console.log('ESP32 / Client Connected via WebSocket 📡');
-  ws.send(JSON.stringify({ type: 'STATUS', message: 'B12 Venom WebSocket Core Active' }));
+  ws.send(JSON.stringify({ type: 'STATUS', message: 'B12 Venom Core Active' }));
 
   ws.on('message', (message) => {
     console.log('WS Received:', message.toString());
   });
 });
 
-// Gemini API Call with Key Rotation & Dynamic Length Support
-async function callGemini(promptText) {
+// Gemini API Core Engine (Supports Text & Direct Audio Input)
+async function callGemini(inputData) {
   const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   
   if (!rawKeys) {
@@ -48,7 +48,21 @@ async function callGemini(promptText) {
   const models = ["gemini-3.6-flash"];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
-    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Complete your thoughts fully.`;
+    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Complete your response fully.`;
+
+  // Build Parts based on input (Text or ESP32 Audio)
+  let userParts = [];
+  if (inputData.audioBase64) {
+    userParts.push({
+      inline_data: {
+        mime_type: inputData.mimeType || "audio/wav",
+        data: inputData.audioBase64
+      }
+    });
+    if (inputData.text) userParts.push({ text: inputData.text });
+  } else {
+    userParts.push({ text: inputData.text });
+  }
 
   const payload = {
     system_instruction: {
@@ -57,7 +71,7 @@ async function callGemini(promptText) {
     contents: [
       {
         role: "user",
-        parts: [{ text: promptText }]
+        parts: userParts
       }
     ],
     generationConfig: {
@@ -65,11 +79,11 @@ async function callGemini(promptText) {
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
-            voiceName: "Fenrir" // Deep Venom-like tone
+            voiceName: "Fenrir" // Deep Venom Voice
           }
         }
       },
-      maxOutputTokens: 2048, // Allows full detailed paragraphs without truncation
+      maxOutputTokens: 2048,
       temperature: 0.7
     }
   };
@@ -100,14 +114,14 @@ async function callGemini(promptText) {
             if (part.text) textReply += part.text + " ";
             if (part.inlineData) {
               audioBase64 = part.inlineData.data;
-              mimeType = part.inlineData.mimeType || "audio/wav";
+              mimeType = part.inlineData.mimeType || "audio/pcm";
             }
           }
 
-          console.log(`[Success] Responded using Key #${i + 1} with Model: ${model}`);
+          console.log(`[Success] Key #${i + 1} processed request via ${model}`);
 
           return {
-            text: textReply.trim() || "We are listening, RKS!",
+            text: textReply.trim() || "আমরা শুনছি, RKS!",
             audioBase64,
             mimeType
           };
@@ -115,30 +129,30 @@ async function callGemini(promptText) {
 
         const errText = await response.text();
         if (response.status === 429) {
-          console.warn(`[Quota Exceeded] Key #${i + 1} on ${model}. Switching to next key...`);
+          console.warn(`[Quota Exceeded] Key #${i + 1}. Trying next key...`);
         } else {
-          console.warn(`[API Error] Key #${i + 1} on ${model}: ${errText}`);
+          console.warn(`[API Error] Key #${i + 1}: ${errText}`);
         }
         lastError = `HTTP ${response.status} - ${errText}`;
 
       } catch (err) {
-        console.error(`[Fetch Error] Key #${i + 1} failed:`, err.message);
+        console.error(`[Fetch Error] Key #${i + 1}:`, err.message);
         lastError = err.message;
       }
     }
   }
 
-  throw new Error(`All API Keys exhausted! Please wait for daily reset or add a new key in Settings. Detail: ${lastError}`);
+  throw new Error(`All API Keys exhausted! Detail: ${lastError}`);
 }
 
-// Chat API Route
+// Unified Chat API Endpoint (Handles Text and ESP32 Mic Input)
 app.post('/api/chat', async (req, res) => {
-  const { message } = req.body;
+  const { message, audioBase64, mimeType } = req.body;
   try {
-    let result = await callGemini(message);
+    let result = await callGemini({ text: message, audioBase64, mimeType });
     let rawReply = result.text;
     
-    // Parse Action Commands for ESP32
+    // Parse Action Commands for Hardware
     const actionMatch = rawReply.match(/\[ACTION:(.*?)\]/);
     if (actionMatch) {
       try {
@@ -166,7 +180,7 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Settings API Route
+// Settings API Routes
 app.post('/api/settings', (req, res) => {
   const { apiKey, systemPrompt, pinMappings } = req.body;
   if (apiKey !== undefined) config.apiKey = apiKey.trim();
@@ -183,7 +197,7 @@ app.get('/api/settings', (req, res) => {
   });
 });
 
-// UI Control Center
+// Web UI Control Center
 app.get('/RKS2805sB12', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -220,7 +234,7 @@ app.get('/RKS2805sB12', (req, res) => {
       <div id="drawer" class="drawer">
         <h3>Backend & Multi API Key Setup</h3>
         <label>Gemini API Keys (Separate multiple keys with commas):</label><br>
-        <textarea id="apiKeyInput" rows="3" placeholder="AIzaSyA..., AIzaSyB..., AIzaSyC..." style="width: 95%; background:#111; color:#00ff66; border:1px solid #00ff66; margin: 8px 0 15px 0; padding:10px; font-family:monospace;"></textarea><br>
+        <textarea id="apiKeyInput" rows="3" placeholder="AIzaSyA..., AIzaSyB..." style="width: 95%; background:#111; color:#00ff66; border:1px solid #00ff66; margin: 8px 0 15px 0; padding:10px; font-family:monospace;"></textarea><br>
         
         <h4>ESP32 Hardware Mapping Setup</h4>
         <div id="pinContainer"></div>
@@ -234,7 +248,7 @@ app.get('/RKS2805sB12', (req, res) => {
       </div>
       
       <div class="input-bar">
-        <input type="text" id="userInput" placeholder="Type or click Live Mic to speak with B12..." onkeypress="handleKeyPress(event)">
+        <input type="text" id="userInput" placeholder="Type or click Live Mic to speak..." onkeypress="handleKeyPress(event)">
         <button class="mic-btn" id="micBtn" onclick="toggleLiveMic()">🎙️ LIVE MIC</button>
         <button onclick="sendMsg()">SEND</button>
       </div>
@@ -245,7 +259,50 @@ app.get('/RKS2805sB12', (req, res) => {
           { pinName: "D18", deviceType: "Relay", loadName: "Fan" }
         ];
 
-        var currentAudioPlayer = null;
+        var audioCtx = null;
+
+        function getAudioContext() {
+          if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+          }
+          if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+          }
+          return audioCtx;
+        }
+
+        // Web Audio API PCM Decoder Engine for Gemini Venom Voice
+        function playVenomAudio(base64Data) {
+          if (!base64Data) return;
+          try {
+            var ctx = getAudioContext();
+            var binaryString = window.atob(base64Data);
+            var len = binaryString.length;
+            var bytes = new Uint8Array(len);
+            for (var i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            // Convert 16-bit PCM Mono stream
+            var int16Array = new Int16Array(bytes.buffer);
+            var float32Array = new Float32Array(int16Array.length);
+            for (var j = 0; j < int16Array.length; j++) {
+              float32Array[j] = int16Array[j] / 32768.0;
+            }
+
+            var audioBuffer = ctx.createBuffer(1, float32Array.length, 24000);
+            audioBuffer.getChannelData(0).set(float32Array);
+
+            var source = ctx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(ctx.destination);
+            source.start(0);
+          } catch (e) {
+            console.error("PCM Engine Error, Fallback Audio:", e);
+            var fallback = new Audio("data:audio/wav;base64," + base64Data);
+            fallback.play().catch(function(err){ console.error("Fallback play failed:", err); });
+          }
+        }
 
         async function loadSettings() {
           try {
@@ -308,30 +365,6 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        // Direct Venom Voice Playback Function
-        function playAudio(audioBase64, mimeType) {
-          if (!audioBase64) return;
-
-          if (currentAudioPlayer) {
-            currentAudioPlayer.pause();
-            currentAudioPlayer = null;
-          }
-
-          try {
-            var audioSrc = 'data:' + (mimeType || 'audio/wav') + ';base64,' + audioBase64;
-            currentAudioPlayer = new Audio(audioSrc);
-            
-            var playPromise = currentAudioPlayer.play();
-            if (playPromise !== undefined) {
-              playPromise.catch(function(error) {
-                console.warn("Autoplay was prevented by browser or user interaction required:", error);
-              });
-            }
-          } catch(e) {
-            console.error("Audio Playback Error:", e);
-          }
-        }
-
         var recognition = null;
         var isListening = false;
 
@@ -340,7 +373,7 @@ app.get('/RKS2805sB12', (req, res) => {
           recognition = new SpeechRecognition();
           recognition.continuous = false;
           recognition.interimResults = false;
-          recognition.lang = 'en-US';
+          recognition.lang = 'bn-BD';
 
           recognition.onresult = function(event) {
             var transcript = event.results[0][0].transcript;
@@ -362,6 +395,7 @@ app.get('/RKS2805sB12', (req, res) => {
         }
 
         function toggleLiveMic() {
+          getAudioContext();
           if (!recognition) {
             alert("Browser does not support Live Speech Recognition!");
             return;
@@ -381,6 +415,7 @@ app.get('/RKS2805sB12', (req, res) => {
         }
 
         async function sendMsg() {
+          getAudioContext();
           var input = document.getElementById('userInput');
           var text = input.value.trim();
           if(!text) return;
@@ -400,9 +435,8 @@ app.get('/RKS2805sB12', (req, res) => {
             chat.innerHTML += '<div class="msg bot">' + data.reply + '</div>';
             chat.scrollTop = chat.scrollHeight;
             
-            // Trigger Venom Audio
             if(data.audioBase64) {
-              playAudio(data.audioBase64, data.mimeType);
+              playVenomAudio(data.audioBase64);
             }
           } catch(err) {
             chat.innerHTML += '<div class="msg bot">B12 Error: Connection Failed!</div>';
