@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini API Core Engine (Updated to gemini-3.6-flash)
+// Gemini API Core Engine (Active Gemini 3.6 Models with Quota Fallback)
 async function callGemini(inputData) {
   const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   
@@ -46,8 +46,8 @@ async function callGemini(inputData) {
 
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
   
-  // Updated official supported models for audio generation
-  const models = ["gemini-3.6-flash", "gemini-2.0-flash"];
+  // Active primary model
+  const models = ["gemini-3.6-flash"];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
     `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Complete your response fully.`;
@@ -130,17 +130,24 @@ async function callGemini(inputData) {
         }
 
         const errText = await response.text();
-        console.warn(`[API Error] Key #${i + 1} on ${model}: Status ${response.status}`);
+        if (response.status === 404) {
+          console.warn(`[404 Skip] Model ${model} not available, skipping...`);
+        } else if (response.status === 429) {
+          console.warn(`[429 Quota] Key #${i + 1} exhausted. Trying next key...`);
+        } else {
+          console.warn(`[API Error] Key #${i + 1} on ${model}: ${errText}`);
+        }
+
         lastError = `HTTP ${response.status} - ${errText}`;
 
       } catch (err) {
-        console.error(`[Fetch Error] Key #${i + 1} failed on ${model}:`, err.message);
+        console.error(`[Fetch Error] Key #${i + 1} failed:`, err.message);
         lastError = err.message;
       }
     }
   }
 
-  throw new Error(`All API Keys or Models failed! Detail: ${lastError}`);
+  throw new Error(`Quota limit reached for your current API Key(s). Please add a 2nd API key in Settings (separated by comma) or wait 15 seconds. Detail: ${lastError}`);
 }
 
 // Unified Chat API Endpoint
