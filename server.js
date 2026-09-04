@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini REST API Call with Native Audio Stream Request
+// Gemini REST API Call with Direct Native Audio Request ONLY
 async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
@@ -44,7 +44,6 @@ async function callGemini(promptText) {
     throw new Error("API Key missing! Set it in Settings or Render Variables.");
   }
 
-  // Updated model endpoint to gemini-3.6-flash
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${activeKey}`;
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
@@ -74,30 +73,15 @@ async function callGemini(promptText) {
     }
   };
 
-  let response = await fetch(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
-    // Fallback payload if audio modality is restricted on endpoint key
-    const fallbackPayload = {
-      system_instruction: {
-        parts: [{ text: `${config.systemPrompt}\n\n${hwContext}` }]
-      },
-      contents: [{ role: "user", parts: [{ text: promptText }] }],
-      generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
-    };
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fallbackPayload)
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`HTTP ${response.status} - ${errText}`);
-    }
+    const errText = await response.text();
+    throw new Error(`HTTP ${response.status} - ${errText}`);
   }
 
   const data = await response.json();
@@ -287,25 +271,18 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        // Single Audio Execution Player
-        function playAudio(audioBase64, mimeType, text) {
+        // STRICTLY Gemini Native Audio Player - NO JavaScript SpeechSynthesis Fallback
+        function playAudio(audioBase64, mimeType) {
           if (currentAudioPlayer) {
             currentAudioPlayer.pause();
             currentAudioPlayer = null;
           }
-          if ('speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-          }
 
           if (audioBase64) {
             currentAudioPlayer = new Audio('data:' + (mimeType || 'audio/wav') + ';base64,' + audioBase64);
-            currentAudioPlayer.play().catch(function(e) { console.error("Audio playback error:", e); });
-          } else if ('speechSynthesis' in window) {
-            var cleanText = text.replace(/B12:/g, '').replace(/\\*/g, '').trim();
-            var utterance = new SpeechSynthesisUtterance(cleanText);
-            utterance.pitch = 0.2;
-            utterance.rate = 0.85;
-            window.speechSynthesis.speak(utterance);
+            currentAudioPlayer.play().catch(function(e) { console.error("Native Audio playback error:", e); });
+          } else {
+            console.warn("No native Gemini audio stream returned for this response.");
           }
         }
 
@@ -379,7 +356,7 @@ app.get('/RKS2805sB12', (req, res) => {
             chat.innerHTML += '<div class="msg bot">' + data.reply + '</div>';
             chat.scrollTop = chat.scrollHeight;
             
-            playAudio(data.audioBase64, data.mimeType, data.reply);
+            playAudio(data.audioBase64, data.mimeType);
           } catch(err) {
             chat.innerHTML += '<div class="msg bot">B12 Error: Connection Failed!</div>';
             chat.scrollTop = chat.scrollHeight;
