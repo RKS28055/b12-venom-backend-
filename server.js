@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini REST API Call with Direct Native Audio Request ONLY
+// Gemini REST API Call with Multi-Model Fallback on Rate Limit (429)
 async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
@@ -44,7 +44,12 @@ async function callGemini(promptText) {
     throw new Error("API Key missing! Set it in Settings or Render Variables.");
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${activeKey}`;
+  // Model hierarchy to try if quota limit (429) is hit
+  const models = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash"
+  ];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
     `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Respond as arrogant, dark Venom in Banglish/English. Keep response natural and complete under 40 words.`;
@@ -73,39 +78,53 @@ async function callGemini(promptText) {
     }
   };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+  let lastError = null;
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`HTTP ${response.status} - ${errText}`);
+  for (const model of models) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
+      
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        
+        let textReply = "";
+        let audioBase64 = null;
+        let mimeType = null;
+
+        for (const part of parts) {
+          if (part.text) {
+            textReply += part.text + " ";
+          }
+          if (part.inlineData) {
+            audioBase64 = part.inlineData.data;
+            mimeType = part.inlineData.mimeType || "audio/wav";
+          }
+        }
+
+        return {
+          text: textReply.trim() || "We are listening, RKS!",
+          audioBase64,
+          mimeType
+        };
+      } else {
+        const errText = await response.text();
+        lastError = `HTTP ${response.status} [${model}] - ${errText}`;
+        console.warn(`Model ${model} failed with:`, lastError);
+      }
+    } catch (err) {
+      lastError = err.message;
+      console.warn(`Error connecting to ${model}:`, err.message);
+    }
   }
 
-  const data = await response.json();
-  const parts = data.candidates?.[0]?.content?.parts || [];
-  
-  let textReply = "";
-  let audioBase64 = null;
-  let mimeType = null;
-
-  for (const part of parts) {
-    if (part.text) {
-      textReply += part.text + " ";
-    }
-    if (part.inlineData) {
-      audioBase64 = part.inlineData.data;
-      mimeType = part.inlineData.mimeType || "audio/wav";
-    }
-  }
-
-  return {
-    text: textReply.trim() || "We are listening, RKS!",
-    audioBase64,
-    mimeType
-  };
+  throw new Error(`Quota or API limit reached across all models! Please generate a new API key from Google AI Studio. Last Error: ${lastError}`);
 }
 
 // Chat API Route & Hardware Trigger Parser
@@ -271,7 +290,7 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        // STRICTLY Gemini Native Audio Player - NO JavaScript SpeechSynthesis Fallback
+        // STRICTLY Gemini Native Audio Player - NO JavaScript SpeechSynthesis
         function playAudio(audioBase64, mimeType) {
           if (currentAudioPlayer) {
             currentAudioPlayer.pause();
