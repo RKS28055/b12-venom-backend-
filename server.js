@@ -8,7 +8,7 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.json());
 
-// dynamic state with hardware pin mappings
+// Dynamic state with hardware pin mappings
 let config = {
   apiKey: process.env.GEMINI_API_KEY || "",
   systemPrompt: "You are B12, a crazy, arrogant, and aggressive Venom symbiote AI addressing user as RKS. Speak mostly in Banglish (a mix of Bengali and English) or high-energy aggressive English. Be emotional, sarcastic, loud when crazy, and deep when dangerous. Keep replies short, snappy, and powerful. Never summarize user inputs or output 'Input'.",
@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini REST API Call with proper System Instruction
+// Gemini REST API Call
 async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
@@ -80,7 +80,7 @@ async function callGemini(promptText) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "HaHa! Speak up, RKS!";
 }
 
-// Chat API Route & Hardware Trigger Parser
+// Chat API Route
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   try {
@@ -126,7 +126,7 @@ app.get('/api/settings', (req, res) => {
   });
 });
 
-// Venom UI Control Center
+// UI Control Center
 app.get('/RKS2805sB12', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -177,35 +177,35 @@ app.get('/RKS2805sB12', (req, res) => {
       </div>
       
       <div class="input-bar">
-        <input type="text" id="userInput" placeholder="Type or click Live Mic to speak with B12..." onkeypress="if(event.key==='Enter') sendMsg()">
+        <input type="text" id="userInput" placeholder="Type or click Live Mic to speak with B12..." onkeypress="handleKeyPress(event)">
         <button class="mic-btn" id="micBtn" onclick="toggleLiveMic()">🎙️ LIVE MIC</button>
         <button onclick="sendMsg()">SEND</button>
       </div>
 
       <script>
-        let currentMappings = [
+        var currentMappings = [
           { pinName: "D5", deviceType: "Relay", loadName: "Light" },
           { pinName: "D18", deviceType: "Relay", loadName: "Fan" }
         ];
 
         function toggleDrawer() {
-          const d = document.getElementById('drawer');
-          d.style.display = d.style.display === 'block' ? 'none' : 'block';
+          var d = document.getElementById('drawer');
+          d.style.display = (d.style.display === 'block') ? 'none' : 'block';
           if(d.style.display === 'block') renderPinRows();
         }
 
         function renderPinRows() {
-          const container = document.getElementById('pinContainer');
+          var container = document.getElementById('pinContainer');
           container.innerHTML = '';
-          currentMappings.forEach((m, idx) => {
-            container.innerHTML += \`
-              <div class="pin-row">
-                <input type="text" placeholder="Pin Name (e.g. D19, hello1)" value="\${m.pinName}" id="pin_\${idx}">
-                <input type="text" placeholder="Device (e.g. Relay, LED)" value="\${m.deviceType}" id="dev_\${idx}">
-                <input type="text" placeholder="Connected Load (e.g. Light, NONE)" value="\${m.loadName}" id="load_\${idx}">
-              </div>
-            \`;
-          });
+          for (var i = 0; i < currentMappings.length; i++) {
+            var m = currentMappings[i];
+            var rowHtml = '<div class="pin-row">' +
+              '<input type="text" placeholder="Pin Name" value="' + (m.pinName || '') + '" id="pin_' + i + '">' +
+              '<input type="text" placeholder="Device" value="' + (m.deviceType || '') + '" id="dev_' + i + '">' +
+              '<input type="text" placeholder="Connected Load" value="' + (m.loadName || '') + '" id="load_' + i + '">' +
+            '</div>';
+            container.innerHTML += rowHtml;
+          }
         }
 
         function addPinRow() {
@@ -214,74 +214,80 @@ app.get('/RKS2805sB12', (req, res) => {
         }
 
         async function saveSettings() {
-          const key = document.getElementById('apiKeyInput').value;
-          const updatedMappings = currentMappings.map((_, idx) => ({
-            pinName: document.getElementById(\`pin_\${idx}\`).value.trim(),
-            deviceType: document.getElementById(\`dev_\${idx}\`).value.trim(),
-            loadName: document.getElementById(\`load_\${idx}\`).value.trim()
-          })).filter(m => m.pinName !== "");
+          var key = document.getElementById('apiKeyInput').value;
+          var updatedMappings = [];
+          for (var i = 0; i < currentMappings.length; i++) {
+            var pVal = document.getElementById('pin_' + i).value.trim();
+            var dVal = document.getElementById('dev_' + i).value.trim();
+            var lVal = document.getElementById('load_' + i).value.trim();
+            if (pVal !== "") {
+              updatedMappings.push({ pinName: pVal, deviceType: dVal, loadName: lVal });
+            }
+          }
 
-          const res = await fetch('/api/settings', {
+          var res = await fetch('/api/settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ apiKey: key, pinMappings: updatedMappings })
           });
-          const data = await res.json();
+          var data = await res.json();
           alert(data.message);
           toggleDrawer();
         }
 
-        // True Dual-Voice Symbiote Venom Speech Synthesis
         function speakVenom(text) {
           if (!('speechSynthesis' in window)) return;
           window.speechSynthesis.cancel();
 
-          const cleanText = text.replace(/B12:/g, '').replace(/\*/g, '').trim();
-          const voices = window.speechSynthesis.getVoices();
-          const maleVoice = voices.find(v => v.lang.includes('en') && (v.name.includes('Male') || v.name.includes('David') || v.name.includes('Google US English')));
+          var cleanText = text.replace(/B12:/g, '').replace(/\\*/g, '').trim();
+          var voices = window.speechSynthesis.getVoices();
+          var maleVoice = null;
+          for (var i = 0; i < voices.length; i++) {
+            if (voices[i].lang.indexOf('en') !== -1 && (voices[i].name.indexOf('Male') !== -1 || voices[i].name.indexOf('David') !== -1 || voices[i].name.indexOf('Google US English') !== -1)) {
+              maleVoice = voices[i];
+              break;
+            }
+          }
 
-          // Voice 1: Deep Monster Pitch
-          const v1 = new SpeechSynthesisUtterance(cleanText);
+          var v1 = new SpeechSynthesisUtterance(cleanText);
           v1.pitch = 0.1;
           v1.rate = 0.8;
           if (maleVoice) v1.voice = maleVoice;
 
-          // Voice 2: Aggressive Overlayer Pitch (Dual Voice Effect)
-          const v2 = new SpeechSynthesisUtterance(cleanText);
+          var v2 = new SpeechSynthesisUtterance(cleanText);
           v2.pitch = 0.45;
           v2.rate = 0.83;
           if (maleVoice) v2.voice = maleVoice;
 
           window.speechSynthesis.speak(v1);
-          setTimeout(() => {
+          setTimeout(function() {
             window.speechSynthesis.speak(v2);
           }, 25);
         }
 
-        // Live Voice Recognition (STT)
-        let recognition = null;
-        let isListening = false;
+        var recognition = null;
+        var isListening = false;
 
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-          const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+          var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
           recognition = new SpeechRecognition();
           recognition.continuous = false;
           recognition.interimResults = false;
           recognition.lang = 'en-US';
 
-          recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
+          recognition.onresult = function(event) {
+            var transcript = event.results[0][0].transcript;
             document.getElementById('userInput').value = transcript;
             sendMsg();
           };
 
-          recognition.onend = () => {
+          recognition.onend = function() {
             isListening = false;
             document.getElementById('micBtn').classList.remove('active');
             document.getElementById('micBtn').innerText = '🎙️ LIVE MIC';
           };
 
-          recognition.onerror = () => {
+          recognition.onerror = function() {
             isListening = false;
             document.getElementById('micBtn').classList.remove('active');
             document.getElementById('micBtn').innerText = '🎙️ LIVE MIC';
@@ -303,26 +309,36 @@ app.get('/RKS2805sB12', (req, res) => {
           }
         }
 
+        function handleKeyPress(e) {
+          if (e.key === 'Enter') {
+            sendMsg();
+          }
+        }
+
         async function sendMsg() {
-          const input = document.getElementById('userInput');
-          const text = input.value.trim();
+          var input = document.getElementById('userInput');
+          var text = input.value.trim();
           if(!text) return;
           
-          const chat = document.getElementById('chat');
+          var chat = document.getElementById('chat');
           chat.innerHTML += '<div class="msg user">RKS: ' + text + '</div>';
           input.value = '';
           chat.scrollTop = chat.scrollHeight;
 
-          const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ message: text })
-          });
-          const data = await res.json();
-          chat.innerHTML += '<div class="msg bot">' + data.reply + '</div>';
-          chat.scrollTop = chat.scrollHeight;
-
-          speakVenom(data.reply);
+          try {
+            var res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ message: text })
+            });
+            var data = await res.json();
+            chat.innerHTML += '<div class="msg bot">' + data.reply + '</div>';
+            chat.scrollTop = chat.scrollHeight;
+            speakVenom(data.reply);
+          } catch(err) {
+            chat.innerHTML += '<div class="msg bot">B12 Error: Connection Failed!</div>';
+            chat.scrollTop = chat.scrollHeight;
+          }
         }
       </script>
     </body>
