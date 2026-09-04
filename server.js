@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini API Core Engine (Active Gemini 3.6 Models with Quota Fallback)
+// Gemini API Core Engine (Multi-Model & Multi-Key Fallback Engine)
 async function callGemini(inputData) {
   const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   
@@ -46,8 +46,12 @@ async function callGemini(inputData) {
 
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
   
-  // Active primary model
-  const models = ["gemini-3.6-flash"];
+  // Model fallback chain: High-Performance -> High Quota Fallbacks
+  const models = [
+    "gemini-3.6-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b"
+  ];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
     `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Complete your response fully.`;
@@ -65,30 +69,6 @@ async function callGemini(inputData) {
     userParts.push({ text: inputData.text });
   }
 
-  const payload = {
-    system_instruction: {
-      parts: [{ text: `${config.systemPrompt}\n\n${hwContext}` }]
-    },
-    contents: [
-      {
-        role: "user",
-        parts: userParts
-      }
-    ],
-    generationConfig: {
-      responseModalities: ["TEXT", "AUDIO"],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName: "Fenrir" // Deep Venom Voice
-          }
-        }
-      },
-      maxOutputTokens: 2048,
-      temperature: 0.7
-    }
-  };
-
   let lastError = "";
 
   for (let i = 0; i < apiKeys.length; i++) {
@@ -96,6 +76,35 @@ async function callGemini(inputData) {
 
     for (const model of models) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
+
+      // Audio modality is optimized for 3.x series; fallback models handle standard text
+      const isAudioSupported = model.includes("3.6") || model.includes("2.0");
+
+      const payload = {
+        system_instruction: {
+          parts: [{ text: `${config.systemPrompt}\n\n${hwContext}` }]
+        },
+        contents: [
+          {
+            role: "user",
+            parts: userParts
+          }
+        ],
+        generationConfig: {
+          ...(isAudioSupported && {
+            responseModalities: ["TEXT", "AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: "Fenrir"
+                }
+              }
+            }
+          }),
+          maxOutputTokens: 2048,
+          temperature: 0.7
+        }
+      };
 
       try {
         const response = await fetch(url, {
@@ -120,7 +129,7 @@ async function callGemini(inputData) {
             }
           }
 
-          console.log(`[Success] Key #${i + 1} succeeded on model ${model}`);
+          console.log(`[Success] Key #${i + 1} worked using model: ${model} ⚡`);
 
           return {
             text: textReply.trim() || "আমরা শুনছি, RKS!",
@@ -130,24 +139,22 @@ async function callGemini(inputData) {
         }
 
         const errText = await response.text();
-        if (response.status === 404) {
-          console.warn(`[404 Skip] Model ${model} not available, skipping...`);
-        } else if (response.status === 429) {
-          console.warn(`[429 Quota] Key #${i + 1} exhausted. Trying next key...`);
+        if (response.status === 429) {
+          console.warn(`[429 Quota Exceeded] Key #${i + 1} on model ${model}. Switching fallback...`);
         } else {
-          console.warn(`[API Error] Key #${i + 1} on ${model}: ${errText}`);
+          console.warn(`[API Error] Key #${i + 1} on ${model}: Status ${response.status}`);
         }
 
         lastError = `HTTP ${response.status} - ${errText}`;
 
       } catch (err) {
-        console.error(`[Fetch Error] Key #${i + 1} failed:`, err.message);
+        console.error(`[Fetch Error] Key #${i + 1} failed on ${model}:`, err.message);
         lastError = err.message;
       }
     }
   }
 
-  throw new Error(`Quota limit reached for your current API Key(s). Please add a 2nd API key in Settings (separated by comma) or wait 15 seconds. Detail: ${lastError}`);
+  throw new Error(`All API Keys and Models exhausted! Add a secondary key from another Google Account in Settings. Detail: ${lastError}`);
 }
 
 // Unified Chat API Endpoint
