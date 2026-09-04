@@ -25,15 +25,15 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Direct REST call with Debug Error Output
+// Direct REST call using gemini-2.0-flash
 async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
   if (!activeKey) {
-    throw new Error("API Key is completely missing! Please set GEMINI_API_KEY in Render Environment Variables or UI Settings.");
+    throw new Error("API Key is missing! Set it in Settings or Render Environment Variables.");
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${activeKey}`;
 
   const payload = {
     contents: [
@@ -61,7 +61,7 @@ async function callGemini(promptText) {
   return reply || "Heh. Speechless, RKS?";
 }
 
-// Chat API Route with direct error details
+// Chat API Route
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   try {
