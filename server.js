@@ -6,7 +6,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-app.use(express.json({ limit: '10mb' })); // Allows ESP32 audio uploads
+app.use(express.json({ limit: '10mb' }));
 
 let config = {
   // Can contain multiple API keys separated by commas: "KEY_1, KEY_2, KEY_3"
@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini API Core Engine (Supports Text & Direct Audio Input)
+// Gemini API Core Engine (Multi-Key & Multi-Model Quota Fallback)
 async function callGemini(inputData) {
   const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   
@@ -45,12 +45,13 @@ async function callGemini(inputData) {
   }
 
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
-  const models = ["gemini-3.6-flash"];
+  
+  // Fallback array across active Gemini models to bypass 429 Quota Exhausted errors
+  const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
     `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Complete your response fully.`;
 
-  // Build Parts based on input (Text or ESP32 Audio)
   let userParts = [];
   if (inputData.audioBase64) {
     userParts.push({
@@ -90,9 +91,11 @@ async function callGemini(inputData) {
 
   let lastError = "";
 
-  for (const model of models) {
-    for (let i = 0; i < apiKeys.length; i++) {
-      const currentKey = apiKeys[i];
+  // Try each API Key across available models until success
+  for (let i = 0; i < apiKeys.length; i++) {
+    const currentKey = apiKeys[i];
+
+    for (const model of models) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
 
       try {
@@ -118,7 +121,7 @@ async function callGemini(inputData) {
             }
           }
 
-          console.log(`[Success] Key #${i + 1} processed request via ${model}`);
+          console.log(`[Success] Key #${i + 1} succeeded on model ${model}`);
 
           return {
             text: textReply.trim() || "আমরা শুনছি, RKS!",
@@ -129,23 +132,23 @@ async function callGemini(inputData) {
 
         const errText = await response.text();
         if (response.status === 429) {
-          console.warn(`[Quota Exceeded] Key #${i + 1}. Trying next key...`);
+          console.warn(`[429 Quota Exceeded] Key #${i + 1} on ${model}. Trying next model/key...`);
         } else {
-          console.warn(`[API Error] Key #${i + 1}: ${errText}`);
+          console.warn(`[API Error] Key #${i + 1} on ${model}: ${errText}`);
         }
         lastError = `HTTP ${response.status} - ${errText}`;
 
       } catch (err) {
-        console.error(`[Fetch Error] Key #${i + 1}:`, err.message);
+        console.error(`[Fetch Error] Key #${i + 1} failed on ${model}:`, err.message);
         lastError = err.message;
       }
     }
   }
 
-  throw new Error(`All API Keys exhausted! Detail: ${lastError}`);
+  throw new Error(`All API Keys and Models exhausted! Please add an extra API key in Settings or wait a few seconds for quota reset. Detail: ${lastError}`);
 }
 
-// Unified Chat API Endpoint (Handles Text and ESP32 Mic Input)
+// Unified Chat API Endpoint
 app.post('/api/chat', async (req, res) => {
   const { message, audioBase64, mimeType } = req.body;
   try {
@@ -283,7 +286,6 @@ app.get('/RKS2805sB12', (req, res) => {
               bytes[i] = binaryString.charCodeAt(i);
             }
 
-            // Convert 16-bit PCM Mono stream
             var int16Array = new Int16Array(bytes.buffer);
             var float32Array = new Float32Array(int16Array.length);
             for (var j = 0; j < int16Array.length; j++) {
