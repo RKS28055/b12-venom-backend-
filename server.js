@@ -22,7 +22,7 @@ const ALL_ESP32_PINS = [
 let config = {
   apiKey: process.env.GEMINI_API_KEY || "YOUR_GEMINI_API_KEY_HERE",
   systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. Respond strictly in pure Bengali using Bengali script (বাংলা বর্ণমালা) or aggressive English. NO Banglish. Adjust response length dynamically. For hardware actions, append [ACTION:{\"pin\":\"PIN_NAME\",\"state\":\"ON/OFF\"}] at the end.",
-  pinMappings: [] // Starts completely empty as requested
+  pinMappings: []
 };
 
 // WebSocket logic for ESP32 Audio / Text streaming
@@ -40,7 +40,7 @@ wss.on('connection', (ws) => {
       const data = JSON.parse(message.toString());
       if (data.type === 'END_AUDIO') {
         const completeAudio = Buffer.concat(audioBuffers);
-        audioBuffers = []; // Clear memory
+        audioBuffers = [];
 
         const base64Audio = completeAudio.toString('base64');
         let replyText = "";
@@ -48,7 +48,6 @@ wss.on('connection', (ws) => {
         try {
           replyText = await callGemini({ audioBase64: base64Audio, mimeType: "audio/wav" });
         } catch (err) {
-          // If Gemini fails, convert the Error message into speech for ESP32!
           replyText = `সিস্টেম এরর দেখা দিয়েছে, RKS! ${err.message}`;
         }
         
@@ -63,7 +62,6 @@ wss.on('connection', (ws) => {
 async function processAndStreamResponse(ws, text) {
   let cleanText = text;
   
-  // Extract Action Tag for Relays / Pins
   const actionMatch = text.match(/\[ACTION:(.*?)\]/);
   if (actionMatch) {
     try {
@@ -81,10 +79,8 @@ async function processAndStreamResponse(ws, text) {
     } catch (e) {}
   }
 
-  // Send Text Reply
   ws.send(JSON.stringify({ type: "TEXT_REPLY", text: cleanText }));
 
-  // Convert Text/Error to TTS Audio for ESP32 Playback
   try {
     const ttsBase64 = await googleTTS.getAudioBase64(cleanText.substring(0, 300), {
       lang: 'bn',
@@ -108,15 +104,14 @@ async function processAndStreamResponse(ws, text) {
   }
 }
 
-// Gemini 1.5 Flash Core Call
+// Gemini Core Call
 async function callGemini(inputData) {
   const apiKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY_HERE") {
     throw new Error("এপিআই কী দেওয়া নেই! server.js চেক করুন।");
   }
 
-  // Dual Fallback Model Strategy
-  const model = "gemini-1.5-flash";
+  const model = "gemini-1.5-flash-latest";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const hwContext = `HARDWARE PIN MAPPINGS:\n${JSON.stringify(config.pinMappings)}\n` +
@@ -160,7 +155,6 @@ app.post('/api/chat', async (req, res) => {
     const replyText = await callGemini({ text: message });
     res.json({ success: true, reply: replyText });
   } catch (err) {
-    // Return error message directly to UI so TTS can speak the error
     res.json({ success: false, reply: `B12 Error: ${err.message}` });
   }
 });
@@ -221,7 +215,6 @@ app.get('/RKS2805sB12', (req, res) => {
         <button class="gear-btn" onclick="toggleDrawer()">⚙️ SETTINGS</button>
       </div>
       
-      <!-- Settings Drawer -->
       <div id="drawer" class="drawer">
         <h3>1. Custom System Prompt (AI Behavior Instructions)</h3>
         <textarea id="promptInput" rows="3" placeholder="Write custom prompt instructions for B12..."></textarea>
@@ -240,11 +233,9 @@ app.get('/RKS2805sB12', (req, res) => {
           <tbody id="pinContainer"></tbody>
         </table>
         <button class="add-btn" onclick="addPinRow()">+ Add New Pin Mapping</button>
-
         <button class="save-btn" onclick="saveSettings()">SAVE ALL CONFIGURATIONS ⚡</button>
       </div>
 
-      <!-- Chat UI -->
       <div id="chat" class="chat-container">
         <div class="msg bot">B12: WE ARE ONLINE, RKS! Say something... 😈</div>
       </div>
@@ -264,8 +255,8 @@ app.get('/RKS2805sB12', (req, res) => {
             window.speechSynthesis.cancel();
             var ut = new SpeechSynthesisUtterance(text);
             ut.lang = 'bn-BD';
-            ut.pitch = 0.2; // Venom Deep Pitch
-            ut.rate = 0.85;  // Authoritative Slow Speed
+            ut.pitch = 0.2;
+            ut.rate = 0.85;
             window.speechSynthesis.speak(ut);
           }
         }
@@ -290,15 +281,11 @@ app.get('/RKS2805sB12', (req, res) => {
         function renderPinRows() {
           var container = document.getElementById('pinContainer');
           container.innerHTML = '';
-
-          // Collect currently selected pins across rows
           var selectedPins = currentMappings.map(m => m.pinName).filter(Boolean);
 
           for (var i = 0; i < currentMappings.length; i++) {
             var m = currentMappings[i];
             var tr = document.createElement('tr');
-
-            // Build dynamic dropdown options (Filtering out used pins)
             var optionsHtml = '<option value="">-- Select Pin --</option>';
             for (var j = 0; j < allPins.length; j++) {
               var p = allPins[j];
@@ -326,7 +313,7 @@ app.get('/RKS2805sB12', (req, res) => {
         function updateRowPin(index) {
           var sel = document.getElementById('pin_' + index);
           currentMappings[index].pinName = sel.value;
-          renderPinRows(); // Re-render to update pin dropdown list across all rows
+          renderPinRows();
         }
 
         function addPinRow() {
@@ -364,13 +351,11 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        // Voice Input & Chat Handling
         var recognition = null;
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
           var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
           recognition = new SpeechRecognition();
           recognition.lang = 'bn-BD';
-
           recognition.onresult = function(event) {
             document.getElementById('userInput').value = event.results[0][0].transcript;
             sendMsg();
@@ -404,8 +389,6 @@ app.get('/RKS2805sB12', (req, res) => {
             
             chat.innerHTML += '<div class="msg bot">B12: ' + data.reply + '</div>';
             chat.scrollTop = chat.scrollHeight;
-            
-            // Speak reply OR Speak the error!
             speakVenom(data.reply);
 
           } catch(err) {
