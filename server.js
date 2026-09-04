@@ -44,7 +44,8 @@ async function callGemini(promptText) {
     throw new Error("API Key missing! Set it in Settings or Render Variables.");
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${activeKey}`;
+  // Updated model endpoint to gemini-3.6-flash
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${activeKey}`;
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
     `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Respond as arrogant, dark Venom in Banglish/English. Keep response natural and complete under 40 words.`;
@@ -286,7 +287,7 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        // Single Audio Execution Player (Gemini Stream or Single Pitch Speech)
+        // Single Audio Execution Player
         function playAudio(audioBase64, mimeType, text) {
           if (currentAudioPlayer) {
             currentAudioPlayer.pause();
