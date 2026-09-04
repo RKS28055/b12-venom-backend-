@@ -8,10 +8,10 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.json());
 
-// Dynamic state with hardware pin mappings
+// dynamic state with hardware pin mappings
 let config = {
   apiKey: process.env.GEMINI_API_KEY || "",
-  systemPrompt: "You are B12, a Venom-like AI (arrogant, sarcastic, authoritative, addressing user as RKS). Respond concisely and sharply in character. Never summarize user inputs.",
+  systemPrompt: "You are B12, a crazy, arrogant, and aggressive Venom symbiote AI addressing user as RKS. Speak mostly in Banglish (a mix of Bengali and English) or high-energy aggressive English. Be emotional, sarcastic, loud when crazy, and deep when dangerous. Keep replies short, snappy, and powerful. Never summarize user inputs or output 'Input'.",
   pinMappings: [
     { pinName: "D5", deviceType: "Relay", loadName: "Light", status: "OFF" },
     { pinName: "D18", deviceType: "Relay", loadName: "Fan", status: "OFF" }
@@ -41,13 +41,13 @@ async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
   if (!activeKey) {
-    throw new Error("API Key is missing! Set it in Settings or Render Environment Variables.");
+    throw new Error("API Key missing! Set it in Settings or Render Variables.");
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${activeKey}`;
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
-    `If RKS asks to turn ON/OFF any device/relay/pin, include an ACTION TAG at the end of your response like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Otherwise, just reply normally as B12. Keep response concise and fast.`;
+    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Respond as crazy angry Venom in Banglish/English. Keep it fast and under 30 words.`;
 
   const payload = {
     system_instruction: {
@@ -60,8 +60,8 @@ async function callGemini(promptText) {
       }
     ],
     generationConfig: {
-      maxOutputTokens: 250,
-      temperature: 0.7
+      maxOutputTokens: 200,
+      temperature: 0.95
     }
   };
 
@@ -77,7 +77,7 @@ async function callGemini(promptText) {
   }
 
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "Speechless, RKS?";
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "HaHa! Speak up, RKS!";
 }
 
 // Chat API Route & Hardware Trigger Parser
@@ -93,11 +93,9 @@ app.post('/api/chat', async (req, res) => {
         const actionObj = JSON.parse(actionMatch[1]);
         broadcastToESP32({ type: "HARDWARE_CONTROL", ...actionObj });
         
-        // Update local status state
         const targetPin = config.pinMappings.find(p => p.pinName.toLowerCase() === actionObj.pin.toLowerCase());
         if (targetPin) targetPin.status = actionObj.state;
 
-        // Clean action tag from voice/text reply
         rawReply = rawReply.replace(/\[ACTION:.*?\]/, '').trim();
       } catch (e) {
         console.error("Action Parsing Error:", e.message);
@@ -107,7 +105,7 @@ app.post('/api/chat', async (req, res) => {
     res.json({ success: true, reply: `B12: ${rawReply}` });
   } catch (err) {
     console.error("Chat Error:", err.message);
-    res.json({ success: false, reply: `B12 Error Detail -> ${err.message}` });
+    res.json({ success: false, reply: `B12 Error -> ${err.message}` });
   }
 });
 
@@ -117,7 +115,7 @@ app.post('/api/settings', (req, res) => {
   if (apiKey !== undefined) config.apiKey = apiKey.trim();
   if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
   if (pinMappings !== undefined) config.pinMappings = pinMappings;
-  res.json({ success: true, message: "Venom Core Settings Saved!" });
+  res.json({ success: true, message: "Settings Updated!" });
 });
 
 app.get('/api/settings', (req, res) => {
@@ -128,7 +126,7 @@ app.get('/api/settings', (req, res) => {
   });
 });
 
-// Venom Core Control Center UI
+// Venom UI Control Center
 app.get('/RKS2805sB12', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -143,11 +141,14 @@ app.get('/RKS2805sB12', (req, res) => {
         .msg { margin: 10px 0; padding: 10px; border-radius: 4px; max-width: 85%; font-size: 14px; word-break: break-word; }
         .user { background: #1f0014; color: #ff3377; border: 1px solid #ff3377; margin-left: auto; text-align: right; }
         .bot { background: #001a0a; color: #00ff66; border: 1px solid #00ff66; }
-        .input-bar { display: flex; gap: 10px; }
-        input, button, select { background: #111; color: #00ff66; border: 1px solid #00ff66; padding: 10px; font-family: monospace; border-radius: 4px; }
+        .input-bar { display: flex; gap: 8px; }
+        input, button { background: #111; color: #00ff66; border: 1px solid #00ff66; padding: 12px; font-family: monospace; border-radius: 4px; }
         input { flex: 1; }
         button { cursor: pointer; background: #00ff66; color: #000; font-weight: bold; }
         button:hover { background: #00cc52; }
+        .mic-btn { background: #ff0055; color: #fff; border-color: #ff0055; }
+        .mic-btn.active { background: #ffcc00; color: #000; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
         .drawer { display: none; background: #0a0a0a; border: 1px dashed #00ff66; padding: 15px; margin-bottom: 15px; border-radius: 6px; }
         .pin-row { display: flex; gap: 8px; margin-bottom: 8px; }
         .pin-row input { width: 30%; }
@@ -172,11 +173,12 @@ app.get('/RKS2805sB12', (req, res) => {
       </div>
 
       <div id="chat" class="chat-container">
-        <div class="msg bot">B12 Active. State your command, RKS... *evil grin*</div>
+        <div class="msg bot">WE ARE B12! State your desire, RKS... *evil laugh*</div>
       </div>
       
       <div class="input-bar">
-        <input type="text" id="userInput" placeholder="Send prompt or pin command to B12..." onkeypress="if(event.key==='Enter') sendMsg()">
+        <input type="text" id="userInput" placeholder="Type or click Live Mic to speak with B12..." onkeypress="if(event.key==='Enter') sendMsg()">
+        <button class="mic-btn" id="micBtn" onclick="toggleLiveMic()">🎙️ LIVE MIC</button>
         <button onclick="sendMsg()">SEND</button>
       </div>
 
@@ -229,21 +231,76 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        // Heavy Deep Venom TTS Engine
+        // True Dual-Voice Symbiote Venom Speech Synthesis
         function speakVenom(text) {
           if (!('speechSynthesis' in window)) return;
           window.speechSynthesis.cancel();
-          const cleanText = text.replace(/B12:/g, '').trim();
-          const utterance = new SpeechSynthesisUtterance(cleanText);
-          
-          utterance.pitch = 0.2;
-          utterance.rate = 0.85;
-          
+
+          const cleanText = text.replace(/B12:/g, '').replace(/\*/g, '').trim();
           const voices = window.speechSynthesis.getVoices();
           const maleVoice = voices.find(v => v.lang.includes('en') && (v.name.includes('Male') || v.name.includes('David') || v.name.includes('Google US English')));
-          if (maleVoice) utterance.voice = maleVoice;
 
-          window.speechSynthesis.speak(utterance);
+          // Voice 1: Deep Monster Pitch
+          const v1 = new SpeechSynthesisUtterance(cleanText);
+          v1.pitch = 0.1;
+          v1.rate = 0.8;
+          if (maleVoice) v1.voice = maleVoice;
+
+          // Voice 2: Aggressive Overlayer Pitch (Dual Voice Effect)
+          const v2 = new SpeechSynthesisUtterance(cleanText);
+          v2.pitch = 0.45;
+          v2.rate = 0.83;
+          if (maleVoice) v2.voice = maleVoice;
+
+          window.speechSynthesis.speak(v1);
+          setTimeout(() => {
+            window.speechSynthesis.speak(v2);
+          }, 25);
+        }
+
+        // Live Voice Recognition (STT)
+        let recognition = null;
+        let isListening = false;
+
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+          const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+          recognition = new SpeechRecognition();
+          recognition.continuous = false;
+          recognition.interimResults = false;
+          recognition.lang = 'en-US';
+
+          recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            document.getElementById('userInput').value = transcript;
+            sendMsg();
+          };
+
+          recognition.onend = () => {
+            isListening = false;
+            document.getElementById('micBtn').classList.remove('active');
+            document.getElementById('micBtn').innerText = '🎙️ LIVE MIC';
+          };
+
+          recognition.onerror = () => {
+            isListening = false;
+            document.getElementById('micBtn').classList.remove('active');
+            document.getElementById('micBtn').innerText = '🎙️ LIVE MIC';
+          };
+        }
+
+        function toggleLiveMic() {
+          if (!recognition) {
+            alert("Browser does not support Live Speech Recognition!");
+            return;
+          }
+          if (isListening) {
+            recognition.stop();
+          } else {
+            recognition.start();
+            isListening = true;
+            document.getElementById('micBtn').classList.add('active');
+            document.getElementById('micBtn').innerText = '🎧 LISTENING...';
+          }
         }
 
         async function sendMsg() {
