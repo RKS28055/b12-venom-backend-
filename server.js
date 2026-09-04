@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini API Core Engine (Multi-Key & Multi-Model Quota Fallback)
+// Gemini API Core Engine (Audio Capable Models & Smart Quota Handling)
 async function callGemini(inputData) {
   const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   
@@ -46,8 +46,8 @@ async function callGemini(inputData) {
 
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
   
-  // Fallback array across active Gemini models to bypass 429 Quota Exhausted errors
-  const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+  // Audio response output support models
+  const models = ["gemini-2.0-flash", "gemini-2.5-flash"];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
     `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Complete your response fully.`;
@@ -91,7 +91,6 @@ async function callGemini(inputData) {
 
   let lastError = "";
 
-  // Try each API Key across available models until success
   for (let i = 0; i < apiKeys.length; i++) {
     const currentKey = apiKeys[i];
 
@@ -131,11 +130,7 @@ async function callGemini(inputData) {
         }
 
         const errText = await response.text();
-        if (response.status === 429) {
-          console.warn(`[429 Quota Exceeded] Key #${i + 1} on ${model}. Trying next model/key...`);
-        } else {
-          console.warn(`[API Error] Key #${i + 1} on ${model}: ${errText}`);
-        }
+        console.warn(`[API Response] Key #${i + 1} on ${model}: Status ${response.status}`);
         lastError = `HTTP ${response.status} - ${errText}`;
 
       } catch (err) {
@@ -145,7 +140,7 @@ async function callGemini(inputData) {
     }
   }
 
-  throw new Error(`All API Keys and Models exhausted! Please add an extra API key in Settings or wait a few seconds for quota reset. Detail: ${lastError}`);
+  throw new Error(`All API Keys or Models exhausted! Add a secondary key in Settings or retry in a few seconds. Detail: ${lastError}`);
 }
 
 // Unified Chat API Endpoint
