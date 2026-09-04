@@ -104,14 +104,14 @@ async function processAndStreamResponse(ws, text) {
   }
 }
 
-// Gemini Core Call with gemini-1.5-flash model (Most stable & high token limit)
+// Gemini Core Call with gemini-3.6-flash model
 async function callGemini(inputData) {
   const apiKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY_HERE") {
     throw new Error("এপিআই কী দেওয়া নেই! server.js চেক করুন।");
   }
 
-  const model = "gemini-1.5-flash";
+  const model = "gemini-3.6-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const hwContext = `HARDWARE PIN MAPPINGS:\n${JSON.stringify(config.pinMappings)}\n` +
