@@ -8,10 +8,10 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.json());
 
-// Dynamic state with hardware pin mappings
 let config = {
+  // Can contain multiple API keys separated by commas: "KEY_1, KEY_2, KEY_3"
   apiKey: process.env.GEMINI_API_KEY || "",
-  systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. Speak naturally in Banglish (Bengali + English mix) or aggressive English with dark humor and symbiote attitude. Always give complete, full sentences. NEVER cut off mid-sentence or say meta-commentary like 'Input' or 'User greeted'. Always respond directly as B12.",
+  systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. Speak naturally in Banglish (Bengali + English mix) or aggressive English with dark humor and symbiote attitude. Always give complete, full sentences under 25 words. NEVER cut off mid-sentence. Always respond directly as B12.",
   pinMappings: [
     { pinName: "D5", deviceType: "Relay", loadName: "Light", status: "OFF" },
     { pinName: "D18", deviceType: "Relay", loadName: "Fan", status: "OFF" }
@@ -36,23 +36,22 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini REST API Call with Multi-Model Fallback on Rate Limit (429)
+// Smart Gemini API Call with Key Rotation and Auto-Recovery
 async function callGemini(promptText) {
-  const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
-
-  if (!activeKey) {
-    throw new Error("API Key missing! Set it in Settings or Render Variables.");
+  const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
+  
+  if (!rawKeys) {
+    throw new Error("No API Keys found! Please add your API keys in Settings.");
   }
 
-  // Model hierarchy to try if quota limit (429) is hit
-  const models = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash"
-  ];
+  // Split multiple API keys separated by comma
+  const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+
+  // Preferred latest models in priority order
+  const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
-    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Respond as arrogant, dark Venom in Banglish/English. Keep response natural and complete under 40 words.`;
+    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Keep response under 25 words.`;
 
   const payload = {
     system_instruction: {
@@ -73,61 +72,70 @@ async function callGemini(promptText) {
           }
         }
       },
-      maxOutputTokens: 500,
-      temperature: 0.7
+      maxOutputTokens: 150, // Optimized for ultra-fast response speed
+      temperature: 0.6
     }
   };
 
-  let lastError = null;
+  let lastError = "";
 
+  // 1. Try ALL API Keys on the LATEST model first
   for (const model of models) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`;
-      
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+    for (let i = 0; i < apiKeys.length; i++) {
+      const currentKey = apiKeys[i];
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
 
-      if (response.ok) {
-        const data = await response.json();
-        const parts = data.candidates?.[0]?.content?.parts || [];
-        
-        let textReply = "";
-        let audioBase64 = null;
-        let mimeType = null;
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-        for (const part of parts) {
-          if (part.text) {
-            textReply += part.text + " ";
+        if (response.ok) {
+          const data = await response.json();
+          const parts = data.candidates?.[0]?.content?.parts || [];
+          
+          let textReply = "";
+          let audioBase64 = null;
+          let mimeType = null;
+
+          for (const part of parts) {
+            if (part.text) textReply += part.text + " ";
+            if (part.inlineData) {
+              audioBase64 = part.inlineData.data;
+              mimeType = part.inlineData.mimeType || "audio/wav";
+            }
           }
-          if (part.inlineData) {
-            audioBase64 = part.inlineData.data;
-            mimeType = part.inlineData.mimeType || "audio/wav";
-          }
+
+          console.log(`[Success] Responded using Key #${i + 1} with Model: ${model}`);
+
+          return {
+            text: textReply.trim() || "We are listening, RKS!",
+            audioBase64,
+            mimeType
+          };
         }
 
-        return {
-          text: textReply.trim() || "We are listening, RKS!",
-          audioBase64,
-          mimeType
-        };
-      } else {
         const errText = await response.text();
-        lastError = `HTTP ${response.status} [${model}] - ${errText}`;
-        console.warn(`Model ${model} failed with:`, lastError);
+        if (response.status === 429) {
+          console.warn(`[Quota Exceeded] Key #${i + 1} on ${model}. Switching to next key...`);
+        } else {
+          console.warn(`[API Error] Key #${i + 1} on ${model}: ${errText}`);
+        }
+        lastError = `HTTP ${response.status} - ${errText}`;
+
+      } catch (err) {
+        console.error(`[Fetch Error] Key #${i + 1} failed:`, err.message);
+        lastError = err.message;
       }
-    } catch (err) {
-      lastError = err.message;
-      console.warn(`Error connecting to ${model}:`, err.message);
     }
   }
 
-  throw new Error(`Quota or API limit reached across all models! Please generate a new API key from Google AI Studio. Last Error: ${lastError}`);
+  throw new Error(`All API Keys and models exhausted! Please wait for daily reset or add a new key in Settings. Detail: ${lastError}`);
 }
 
-// Chat API Route & Hardware Trigger Parser
+// Chat API Route
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   try {
@@ -168,12 +176,12 @@ app.post('/api/settings', (req, res) => {
   if (apiKey !== undefined) config.apiKey = apiKey.trim();
   if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
   if (pinMappings !== undefined) config.pinMappings = pinMappings;
-  res.json({ success: true, message: "Settings Updated!" });
+  res.json({ success: true, message: "Settings Updated Successfully!" });
 });
 
 app.get('/api/settings', (req, res) => {
   res.json({ 
-    apiKey: config.apiKey ? "********" : "", 
+    apiKey: config.apiKey, 
     systemPrompt: config.systemPrompt,
     pinMappings: config.pinMappings
   });
@@ -214,9 +222,9 @@ app.get('/RKS2805sB12', (req, res) => {
       </div>
       
       <div id="drawer" class="drawer">
-        <h3>Backend & ESP32 Pin Mapping</h3>
-        <label>Gemini API Key:</label><br>
-        <input type="password" id="apiKeyInput" placeholder="Paste Gemini API key..." style="width: 95%; margin: 8px 0 15px 0;"><br>
+        <h3>Backend & Multi API Key Setup</h3>
+        <label>Gemini API Keys (Separate multiple keys with commas):</label><br>
+        <textarea id="apiKeyInput" rows="3" placeholder="AIzaSyA..., AIzaSyB..., AIzaSyC..." style="width: 95%; background:#111; color:#00ff66; border:1px solid #00ff66; margin: 8px 0 15px 0; padding:10px; font-family:monospace;"></textarea><br>
         
         <h4>ESP32 Hardware Mapping Setup</h4>
         <div id="pinContainer"></div>
@@ -243,10 +251,24 @@ app.get('/RKS2805sB12', (req, res) => {
 
         var currentAudioPlayer = null;
 
+        async function loadSettings() {
+          try {
+            var res = await fetch('/api/settings');
+            var data = await res.json();
+            if(data.apiKey) document.getElementById('apiKeyInput').value = data.apiKey;
+            if(data.pinMappings) {
+              currentMappings = data.pinMappings;
+              renderPinRows();
+            }
+          } catch(e) {}
+        }
+
         function toggleDrawer() {
           var d = document.getElementById('drawer');
           d.style.display = (d.style.display === 'block') ? 'none' : 'block';
-          if(d.style.display === 'block') renderPinRows();
+          if(d.style.display === 'block') {
+            loadSettings();
+          }
         }
 
         function renderPinRows() {
@@ -290,7 +312,6 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        // STRICTLY Gemini Native Audio Player - NO JavaScript SpeechSynthesis
         function playAudio(audioBase64, mimeType) {
           if (currentAudioPlayer) {
             currentAudioPlayer.pause();
@@ -299,9 +320,7 @@ app.get('/RKS2805sB12', (req, res) => {
 
           if (audioBase64) {
             currentAudioPlayer = new Audio('data:' + (mimeType || 'audio/wav') + ';base64,' + audioBase64);
-            currentAudioPlayer.play().catch(function(e) { console.error("Native Audio playback error:", e); });
-          } else {
-            console.warn("No native Gemini audio stream returned for this response.");
+            currentAudioPlayer.play().catch(function(e) { console.error("Audio error:", e); });
           }
         }
 
@@ -350,9 +369,7 @@ app.get('/RKS2805sB12', (req, res) => {
         }
 
         function handleKeyPress(e) {
-          if (e.key === 'Enter') {
-            sendMsg();
-          }
+          if (e.key === 'Enter') sendMsg();
         }
 
         async function sendMsg() {
@@ -389,5 +406,5 @@ app.get('/RKS2805sB12', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`B12 Venom Server running on port ${PORT} 🚀`);
+  console.log(`B12 Venom Fast Core Server running on port ${PORT} 🚀`);
 });
