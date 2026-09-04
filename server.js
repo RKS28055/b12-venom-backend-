@@ -25,7 +25,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Direct REST call using gemini-2.0-flash
+// Direct REST call using gemini-3.6-flash
 async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
@@ -33,7 +33,7 @@ async function callGemini(promptText) {
     throw new Error("API Key is missing! Set it in Settings or Render Environment Variables.");
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${activeKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${activeKey}`;
 
   const payload = {
     contents: [
