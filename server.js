@@ -11,7 +11,7 @@ app.use(express.json());
 let config = {
   // Can contain multiple API keys separated by commas: "KEY_1, KEY_2, KEY_3"
   apiKey: process.env.GEMINI_API_KEY || "",
-  systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. Speak naturally in Banglish (Bengali + English mix) or aggressive English with dark humor and symbiote attitude. Always give complete, full sentences under 25 words. NEVER cut off mid-sentence. Always respond directly as B12.",
+  systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. Speak naturally in dynamic Banglish (natural daily Bengali mixed with English words, the way Bengalis speak naturally) or full aggressive English with dark humor and symbiote attitude. When speaking Bengali, use clear and proper words. NEVER limit or cut off your response mid-sentence. Adjust your answer length dynamically: if RKS asks a short question, give a punchy response; if RKS asks for a paragraph, explanation, or detailed task, give a complete, full, and detailed response without stopping artificially.",
   pinMappings: [
     { pinName: "D5", deviceType: "Relay", loadName: "Light", status: "OFF" },
     { pinName: "D18", deviceType: "Relay", loadName: "Fan", status: "OFF" }
@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Smart Gemini API Call with Key Rotation using Gemini 3.6 Flash
+// Gemini API Call with Key Rotation & Dynamic Length Support
 async function callGemini(promptText) {
   const rawKeys = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
   
@@ -44,14 +44,11 @@ async function callGemini(promptText) {
     throw new Error("No API Keys found! Please add your API keys in Settings.");
   }
 
-  // Split multiple API keys separated by comma
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
-
-  // Updated active models array
   const models = ["gemini-3.6-flash"];
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
-    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Keep response under 25 words.`;
+    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Complete your thoughts fully.`;
 
   const payload = {
     system_instruction: {
@@ -68,18 +65,17 @@ async function callGemini(promptText) {
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
-            voiceName: "Fenrir"
+            voiceName: "Fenrir" // Deep Venom-like tone
           }
         }
       },
-      maxOutputTokens: 150, // Optimized for high speed
-      temperature: 0.6
+      maxOutputTokens: 2048, // Allows full detailed paragraphs without truncation
+      temperature: 0.7
     }
   };
 
   let lastError = "";
 
-  // Loop through available models and rotate through all API keys
   for (const model of models) {
     for (let i = 0; i < apiKeys.length; i++) {
       const currentKey = apiKeys[i];
@@ -198,8 +194,8 @@ app.get('/RKS2805sB12', (req, res) => {
       <style>
         body { background: #050505; color: #00ff66; font-family: monospace; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #00ff66; padding-bottom: 10px; }
-        .chat-container { border: 1px solid #00ff66; padding: 15px; height: 320px; overflow-y: auto; margin: 15px 0; background: #000; border-radius: 6px; }
-        .msg { margin: 10px 0; padding: 10px; border-radius: 4px; max-width: 85%; font-size: 14px; word-break: break-word; }
+        .chat-container { border: 1px solid #00ff66; padding: 15px; height: 350px; overflow-y: auto; margin: 15px 0; background: #000; border-radius: 6px; }
+        .msg { margin: 10px 0; padding: 10px; border-radius: 4px; max-width: 85%; font-size: 14px; word-break: break-word; line-height: 1.5; }
         .user { background: #1f0014; color: #ff3377; border: 1px solid #ff3377; margin-left: auto; text-align: right; }
         .bot { background: #001a0a; color: #00ff66; border: 1px solid #00ff66; }
         .input-bar { display: flex; gap: 8px; }
@@ -312,15 +308,27 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
+        // Direct Venom Voice Playback Function
         function playAudio(audioBase64, mimeType) {
+          if (!audioBase64) return;
+
           if (currentAudioPlayer) {
             currentAudioPlayer.pause();
             currentAudioPlayer = null;
           }
 
-          if (audioBase64) {
-            currentAudioPlayer = new Audio('data:' + (mimeType || 'audio/wav') + ';base64,' + audioBase64);
-            currentAudioPlayer.play().catch(function(e) { console.error("Audio error:", e); });
+          try {
+            var audioSrc = 'data:' + (mimeType || 'audio/wav') + ';base64,' + audioBase64;
+            currentAudioPlayer = new Audio(audioSrc);
+            
+            var playPromise = currentAudioPlayer.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(function(error) {
+                console.warn("Autoplay was prevented by browser or user interaction required:", error);
+              });
+            }
+          } catch(e) {
+            console.error("Audio Playback Error:", e);
           }
         }
 
@@ -392,7 +400,10 @@ app.get('/RKS2805sB12', (req, res) => {
             chat.innerHTML += '<div class="msg bot">' + data.reply + '</div>';
             chat.scrollTop = chat.scrollHeight;
             
-            playAudio(data.audioBase64, data.mimeType);
+            // Trigger Venom Audio
+            if(data.audioBase64) {
+              playAudio(data.audioBase64, data.mimeType);
+            }
           } catch(err) {
             chat.innerHTML += '<div class="msg bot">B12 Error: Connection Failed!</div>';
             chat.scrollTop = chat.scrollHeight;
