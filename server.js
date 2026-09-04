@@ -11,7 +11,7 @@ app.use(express.json());
 // Dynamic state with hardware pin mappings
 let config = {
   apiKey: process.env.GEMINI_API_KEY || "",
-  systemPrompt: "You are B12, a crazy, arrogant, and aggressive Venom symbiote AI addressing user as RKS. Speak mostly in Banglish (a mix of Bengali and English) or high-energy aggressive English. Be emotional, sarcastic, loud when crazy, and deep when dangerous. Keep replies short, snappy, and powerful. Never summarize user inputs or output 'Input'.",
+  systemPrompt: "You are B12, an arrogant, dark, sarcastic, and authoritative Venom symbiote AI built for RKS. Always address the user as RKS. Speak naturally in Banglish (Bengali + English mix) or aggressive English with dark humor and symbiote attitude. Always give complete, full sentences. NEVER cut off mid-sentence or say meta-commentary like 'Input' or 'User greeted'. Always respond directly as B12.",
   pinMappings: [
     { pinName: "D5", deviceType: "Relay", loadName: "Light", status: "OFF" },
     { pinName: "D18", deviceType: "Relay", loadName: "Fan", status: "OFF" }
@@ -36,7 +36,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Gemini REST API Call
+// Gemini REST API Call with Native Audio Stream Request
 async function callGemini(promptText) {
   const activeKey = (config.apiKey || process.env.GEMINI_API_KEY || "").trim();
 
@@ -44,10 +44,10 @@ async function callGemini(promptText) {
     throw new Error("API Key missing! Set it in Settings or Render Variables.");
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${activeKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${activeKey}`;
 
   const hwContext = `CURRENT ESP32 HARDWARE SETUP:\n${JSON.stringify(config.pinMappings)}\n` +
-    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Respond as crazy angry Venom in Banglish/English. Keep it fast and under 30 words.`;
+    `If RKS asks to turn ON/OFF any relay/device/pin, add an ACTION TAG at the end like: [ACTION:{"pin":"PIN_NAME","state":"ON/OFF"}]. Respond as arrogant, dark Venom in Banglish/English. Keep response natural and complete under 40 words.`;
 
   const payload = {
     system_instruction: {
@@ -60,31 +60,75 @@ async function callGemini(promptText) {
       }
     ],
     generationConfig: {
-      maxOutputTokens: 200,
-      temperature: 0.95
+      responseModalities: ["TEXT", "AUDIO"],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: "Fenrir"
+          }
+        }
+      },
+      maxOutputTokens: 500,
+      temperature: 0.7
     }
   };
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`HTTP ${response.status} - ${errorText}`);
+    // Fallback payload if audio modality is restricted on endpoint key
+    const fallbackPayload = {
+      system_instruction: {
+        parts: [{ text: `${config.systemPrompt}\n\n${hwContext}` }]
+      },
+      contents: [{ role: "user", parts: [{ text: promptText }] }],
+      generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
+    };
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fallbackPayload)
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`HTTP ${response.status} - ${errText}`);
+    }
   }
 
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "HaHa! Speak up, RKS!";
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  
+  let textReply = "";
+  let audioBase64 = null;
+  let mimeType = null;
+
+  for (const part of parts) {
+    if (part.text) {
+      textReply += part.text + " ";
+    }
+    if (part.inlineData) {
+      audioBase64 = part.inlineData.data;
+      mimeType = part.inlineData.mimeType || "audio/wav";
+    }
+  }
+
+  return {
+    text: textReply.trim() || "We are listening, RKS!",
+    audioBase64,
+    mimeType
+  };
 }
 
-// Chat API Route
+// Chat API Route & Hardware Trigger Parser
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
   try {
-    let rawReply = await callGemini(message);
+    let result = await callGemini(message);
+    let rawReply = result.text;
     
     // Parse Action Commands for ESP32
     const actionMatch = rawReply.match(/\[ACTION:(.*?)\]/);
@@ -102,7 +146,12 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    res.json({ success: true, reply: `B12: ${rawReply}` });
+    res.json({
+      success: true,
+      reply: `B12: ${rawReply}`,
+      audioBase64: result.audioBase64,
+      mimeType: result.mimeType
+    });
   } catch (err) {
     console.error("Chat Error:", err.message);
     res.json({ success: false, reply: `B12 Error -> ${err.message}` });
@@ -188,6 +237,8 @@ app.get('/RKS2805sB12', (req, res) => {
           { pinName: "D18", deviceType: "Relay", loadName: "Fan" }
         ];
 
+        var currentAudioPlayer = null;
+
         function toggleDrawer() {
           var d = document.getElementById('drawer');
           d.style.display = (d.style.display === 'block') ? 'none' : 'block';
@@ -235,34 +286,26 @@ app.get('/RKS2805sB12', (req, res) => {
           toggleDrawer();
         }
 
-        function speakVenom(text) {
-          if (!('speechSynthesis' in window)) return;
-          window.speechSynthesis.cancel();
-
-          var cleanText = text.replace(/B12:/g, '').replace(/\\*/g, '').trim();
-          var voices = window.speechSynthesis.getVoices();
-          var maleVoice = null;
-          for (var i = 0; i < voices.length; i++) {
-            if (voices[i].lang.indexOf('en') !== -1 && (voices[i].name.indexOf('Male') !== -1 || voices[i].name.indexOf('David') !== -1 || voices[i].name.indexOf('Google US English') !== -1)) {
-              maleVoice = voices[i];
-              break;
-            }
+        // Single Audio Execution Player (Gemini Stream or Single Pitch Speech)
+        function playAudio(audioBase64, mimeType, text) {
+          if (currentAudioPlayer) {
+            currentAudioPlayer.pause();
+            currentAudioPlayer = null;
+          }
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
           }
 
-          var v1 = new SpeechSynthesisUtterance(cleanText);
-          v1.pitch = 0.1;
-          v1.rate = 0.8;
-          if (maleVoice) v1.voice = maleVoice;
-
-          var v2 = new SpeechSynthesisUtterance(cleanText);
-          v2.pitch = 0.45;
-          v2.rate = 0.83;
-          if (maleVoice) v2.voice = maleVoice;
-
-          window.speechSynthesis.speak(v1);
-          setTimeout(function() {
-            window.speechSynthesis.speak(v2);
-          }, 25);
+          if (audioBase64) {
+            currentAudioPlayer = new Audio('data:' + (mimeType || 'audio/wav') + ';base64,' + audioBase64);
+            currentAudioPlayer.play().catch(function(e) { console.error("Audio playback error:", e); });
+          } else if ('speechSynthesis' in window) {
+            var cleanText = text.replace(/B12:/g, '').replace(/\\*/g, '').trim();
+            var utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.pitch = 0.2;
+            utterance.rate = 0.85;
+            window.speechSynthesis.speak(utterance);
+          }
         }
 
         var recognition = null;
@@ -334,7 +377,8 @@ app.get('/RKS2805sB12', (req, res) => {
             var data = await res.json();
             chat.innerHTML += '<div class="msg bot">' + data.reply + '</div>';
             chat.scrollTop = chat.scrollHeight;
-            speakVenom(data.reply);
+            
+            playAudio(data.audioBase64, data.mimeType, data.reply);
           } catch(err) {
             chat.innerHTML += '<div class="msg bot">B12 Error: Connection Failed!</div>';
             chat.scrollTop = chat.scrollHeight;
